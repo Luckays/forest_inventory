@@ -236,7 +236,7 @@ if __name__ == "__main__":
     plt.plot(range(1, num_epochs + 1), accuracy_history)
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy (%)')
-    plt.title('Training Accuracy over Epochs')
+    plt.title('Training Accuracy over Epochss')
     plt.grid()
 
     plt.tight_layout()
