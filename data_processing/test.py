@@ -1,245 +1,122 @@
-# import torch
-# import torch.nn as nn
-# import torch.optim as optim
-# from torch.utils.data import Dataset, DataLoader
-# import h5py
-# import numpy as np
-# import matplotlib.pyplot as plt
-#
-# # Step 1: Create a Custom Dataset
-# class PointCloudDataset(Dataset):
-#     def __init__(self, data_path):
-#         super().__init__()
-#         # Load the data from HDF5 file
-#         self.data = []
-#         self.max_label = 0
-#         with h5py.File(data_path, 'r') as h5f:
-#             blocks_grp = h5f['blocks']
-#             for block_name in blocks_grp:
-#                 block_grp = blocks_grp[block_name]
-#                 points = block_grp['points'][:]
-#                 self.data.append(points)
-#                 label = points[0, -1]
-#                 if label > self.max_label:
-#                     self.max_label = label
-#
-#     def __len__(self):
-#         return len(self.data)
-#
-#     def __getitem__(self, idx):
-#         point_block = self.data[idx]  # Shape: (1024, 4) - (x, y, z, intensity)
-#         points = point_block[:, :4]  # XYZ + intensity
-#         label = point_block[0, -1]  # Assuming all points in the block have the same class label
-#         return points, label
-#
-# # Step 2: Define the PointNet++ Model (using a basic architecture for simplicity)
-# class PointNetPlusPlus(nn.Module):
-#     def __init__(self, num_classes):
-#         super(PointNetPlusPlus, self).__init__()
-#         # Simplified PointNet++ layers for feature learning
-#         self.sa1 = nn.Sequential(
-#             nn.Conv1d(4, 64, 1),
-#             nn.ReLU(),
-#             nn.Conv1d(64, 128, 1),
-#             nn.ReLU(),
-#             nn.Conv1d(128, 256, 1),
-#             nn.ReLU(),
-#         )
-#         self.fc1 = nn.Linear(256, 128)
-#         self.fc2 = nn.Linear(128, num_classes)
-#
-#     def forward(self, x):
-#         x = x.transpose(2, 1)  # Input shape: (batch_size, num_points, num_features) -> (batch_size, num_features, num_points)
-#         x = self.sa1(x)
-#         x, _ = torch.max(x, 2)  # Global feature (max pooling)
-#         x = x.view(-1, 256)
-#         x = torch.relu(self.fc1(x))
-#         x = self.fc2(x)
-#         return x
-#
-# # Step 3: Training Loop
-# if __name__ == "__main__":
-#     # Dataset and DataLoader
-#     dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks.h5")
-#     num_classes = int(dataset.max_label) + 1  # Set num_classes based on the maximum label value in the dataset
-#
-#     # Hyperparameters
-#     batch_size = 16
-#     num_epochs = 100
-#     learning_rate = 0.00001
-#
-#     # Dataset and DataLoader
-#     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-#
-#     # Model, Loss, and Optimizer
-#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#     model = PointNetPlusPlus(num_classes).to(device)
-#     criterion = nn.CrossEntropyLoss()
-#     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-#
-#     # Training Loop
-#     loss_history = []
-#     for epoch in range(num_epochs):
-#         model.train()
-#         running_loss = 0.0
-#         for i, (points, labels) in enumerate(dataloader):
-#             points, labels = points.to(device).float(), labels.to(device).long()
-#             optimizer.zero_grad()
-#
-#             # Forward pass
-#             outputs = model(points)
-#             loss = criterion(outputs, labels)
-#
-#             # Backward pass and optimization
-#             loss.backward()
-#             optimizer.step()
-#
-#             running_loss += loss.item()
-#
-#         epoch_loss = running_loss / len(dataloader)
-#         loss_history.append(epoch_loss)
-#         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
-#
-#     # Plot the loss function
-#     plt.figure()
-#     plt.plot(range(1, num_epochs + 1), loss_history, marker='o')
-#     plt.xlabel('Epoch')
-#     plt.ylabel('Loss')
-#     plt.title('Training Loss over Epochs')
-#     plt.grid()
-#     plt.show()
-#
-#     print("Training Finished!")
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-import h5py
+# %%
+import laspy
 import numpy as np
-import matplotlib.pyplot as plt
+import h5py
 
-# Step 1: Create a Custom Dataset
-class PointCloudDataset(Dataset):
-    def __init__(self, data_path):
-        super().__init__()
-        # Load the data from HDF5 file
-        self.data = []
-        self.max_label = 0
-        with h5py.File(data_path, 'r') as h5f:
-            blocks_grp = h5f['blocks']
-            for block_name in blocks_grp:
-                block_grp = blocks_grp[block_name]
-                points = block_grp['points'][:]
-                self.data.append(points)
-                label = points[0, -1]
-                if label > self.max_label:
-                    self.max_label = label
+# Load the LAS file efficiently
+with laspy.open(r"C:\Users\lukas\Desktop\pointcloud_big.las") as las_file:
+    las = las_file.read()
+    points = np.vstack((las.x, las.y, las.z)).T
 
-    def __len__(self):
-        return len(self.data)
+    # Adding additional attributes if they exist
+    if hasattr(las, 'intensity'):
+        intensity = las.intensity[:, np.newaxis]
+        points = np.hstack((points, intensity))
 
-    def __getitem__(self, idx):
-        point_block = self.data[idx]  # Shape: (1024, 4) - (x, y, z, intensity)
-        points = point_block[:, :4]  # XYZ + intensity
-        label = point_block[0, -1]  # Assuming all points in the block have the same class label
-        return points, label
+    if hasattr(las, 'red') and hasattr(las, 'green') and hasattr(las, 'blue'):
+        rgb = np.vstack((las.red, las.green, las.blue)).T / 65535.0  # Normalize to [0, 1]
+        points = np.hstack((points, rgb))
 
-# Step 2: Define the PointNet++ Model (using a basic architecture for simplicity)
-class PointNetPlusPlus(nn.Module):
-    def __init__(self, num_classes):
-        super(PointNetPlusPlus, self).__init__()
-        # Simplified PointNet++ layers for feature learning
-        self.sa1 = nn.Sequential(
-            nn.Conv1d(4, 64, 1),
-            nn.ReLU(),
-            nn.Conv1d(64, 128, 1),
-            nn.ReLU(),
-            nn.Conv1d(128, 256, 1),
-            nn.ReLU(),
-        )
-        self.fc1 = nn.Linear(256, 128)
-        self.fc2 = nn.Linear(128, num_classes)
+    if hasattr(las, 'classification_trees'):
+        classification = las.classification_trees[:, np.newaxis]
+        points = np.hstack((points, classification))
 
-    def forward(self, x):
-        x = x.transpose(2, 1)  # Input shape: (batch_size, num_points, num_features) -> (batch_size, num_features, num_points)
-        x = self.sa1(x)
-        x, _ = torch.max(x, 2)  # Global feature (max pooling)
-        x = x.view(-1, 256)
-        x = torch.relu(self.fc1(x))
-        x = self.fc2(x)
-        return x
+print(points)
+# Calculate the total number of points
+total_points = len(points)
+print(f"total_points: {total_points}")
 
-# Step 3: Training Loop
-if __name__ == "__main__":
-    # Dataset and DataLoader
-    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks.h5")
-    num_classes = int(dataset.max_label) + 1  # Set num_classes based on the maximum label value in the dataset
+# Voxelization with overlap
+voxel_size_x = float(input("Enter voxel size for x-axis: "))
+voxel_size_y = float(input("Enter voxel size for y-axis: "))
+voxel_size_z = np.max(points[:, 2]) - np.min(points[:, 2]) + 1
 
-    # Hyperparameters
-    batch_size = 16
-    num_epochs = 100
-    learning_rate = 0.00001
+# Define voxel overlap ratio (e.g., 0.5 for 50% overlap)
+voxel_overlap_ratio = float(input("Enter voxel overlap ratio (0 to 1): "))
 
-    # Dataset and DataLoader
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+# Generate voxel bounds and indices with overlap
+x_min, y_min, z_min = np.min(points[:, :3], axis=0)
+x_max, y_max, z_max = np.max(points[:, :3], axis=0)
 
-    # Model, Loss, and Optimizer
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = PointNetPlusPlus(num_classes).to(device)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+# Calculate the adjusted voxel size to include overlap
+adjusted_voxel_size_x = voxel_size_x * (1 - voxel_overlap_ratio)
+adjusted_voxel_size_y = voxel_size_y * (1 - voxel_overlap_ratio)
+adjusted_voxel_size_z = voxel_size_z * (1 - voxel_overlap_ratio)
 
-    # Training Loop
-    loss_history = []
-    accuracy_history = []
-    for epoch in range(num_epochs):
-        model.train()
-        running_loss = 0.0
-        correct = 0
-        total = 0
-        for i, (points, labels) in enumerate(dataloader):
-            points, labels = points.to(device).float(), labels.to(device).long()
-            optimizer.zero_grad()
+# Generate overlapping voxel indices
+x_indices = []
+y_indices = []
+z_indices = []
+for i in range(int(np.ceil((x_max - x_min) / adjusted_voxel_size_x))):
+    x_indices.append(x_min + i * adjusted_voxel_size_x)
+for i in range(int(np.ceil((y_max - y_min) / adjusted_voxel_size_y))):
+    y_indices.append(y_min + i * adjusted_voxel_size_y)
+for i in range(int(np.ceil((z_max - z_min) / adjusted_voxel_size_z))):
+    z_indices.append(z_min + i * adjusted_voxel_size_z)
 
-            # Forward pass
-            outputs = model(points)
-            loss = criterion(outputs, labels)
+voxel_indices = []
+for x in x_indices:
+    for y in y_indices:
+        for z in z_indices:
+            mask = (points[:, 0] >= x) & (points[:, 0] < x + voxel_size_x) & \
+                   (points[:, 1] >= y) & (points[:, 1] < y + voxel_size_y) & \
+                   (points[:, 2] >= z) & (points[:, 2] < z + voxel_size_z)
+            voxel_points = points[mask]
+            if len(voxel_points) > 0:
+                voxel_indices.append((x, y, z, len(voxel_points)))
 
-            # Backward pass and optimization
-            loss.backward()
-            optimizer.step()
+# Store points for each voxel
+voxel_dict = {}
+for x, y, z, count in voxel_indices:
+    key = (x, y, z)
+    mask = (points[:, 0] >= x) & (points[:, 0] < x + voxel_size_x) & \
+           (points[:, 1] >= y) & (points[:, 1] < y + voxel_size_y) & \
+           (points[:, 2] >= z) & (points[:, 2] < z + voxel_size_z)
+    voxel_points = points[mask]
+    voxel_dict[key] = voxel_points
 
-            running_loss += loss.item()
+# Divide each voxel into blocks with 1024 points (input to PointNet++) without overlap
+block_size = 1024
+blocks = []
+block_metadata = []
 
-            # Calculate accuracy
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+for voxel_key in voxel_dict:
+    voxel_points = voxel_dict[voxel_key]
 
-        epoch_loss = running_loss / len(dataloader)
-        epoch_accuracy = 100 * correct / total
-        loss_history.append(epoch_loss)
-        accuracy_history.append(epoch_accuracy)
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2f}%")
+    print(f"Voxel {voxel_key}: Number of points in voxel: {len(voxel_points)}")
 
-    # Plot the loss function and accuracy
-    plt.figure()
-    plt.subplot(2, 1, 1)
-    plt.plot(range(1, num_epochs + 1), loss_history)
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training Loss over Epochs')
-    plt.grid()
+    if len(voxel_points) < block_size:
+        continue
 
-    plt.subplot(2, 1, 2)
-    plt.plot(range(1, num_epochs + 1), accuracy_history)
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy (%)')
-    plt.title('Training Accuracy over Epochss')
-    plt.grid()
+    # Create blocks without overlap
+    start_idx = 0
+    voxel_block_count = 0
+    while start_idx + block_size <= len(voxel_points):
+        block = voxel_points[start_idx:start_idx + block_size]
+        blocks.append(block)
+        block_metadata.append({'voxel_key': voxel_key, 'block_index': voxel_block_count})
+        voxel_block_count += 1
+        start_idx += block_size  # Move forward by block size to create non-overlapping blocks
 
-    plt.tight_layout()
-    plt.show()
+    print(f"Voxel {voxel_key}: Number of blocks created: {voxel_block_count}")
 
-    print("Training Finished!")
+print(f"Total number of blocks created: {len(blocks)}")
+
+# Save data to HDF5 format for PointNet++
+with h5py.File(r"C:\Users\lukas\Desktop\pointcloud_blocks2.h5", 'w') as h5f:
+    grp = h5f.create_group('voxels')
+    for voxel_key, voxel_points in voxel_dict.items():
+        voxel_name = f"voxel_{voxel_key[0]}_{voxel_key[1]}_{voxel_key[2]}"
+        voxel_grp = grp.create_group(voxel_name)
+        voxel_grp.create_dataset('points', data=voxel_points)
+        voxel_grp.attrs['voxel_key'] = voxel_key
+
+    blocks_grp = h5f.create_group('blocks')
+    for i, block in enumerate(blocks):
+        block_name = f"block_{i}"
+        block_grp = blocks_grp.create_group(block_name)
+        block_grp.create_dataset('points', data=block)
+        block_grp.attrs['voxel_key'] = block_metadata[i]['voxel_key']
+        block_grp.attrs['block_index'] = block_metadata[i]['block_index']
+
+print("Data has been saved to HDF5 format.")
