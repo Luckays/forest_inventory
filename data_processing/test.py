@@ -4,7 +4,7 @@ import numpy as np
 import h5py
 
 # Load the LAS file efficiently
-with laspy.open(r"C:\Users\lukas\Desktop\pointcloud_big.las") as las_file:
+with laspy.open(r"C:\Users\lukas\Desktop\pointcloud_velky.las") as las_file:
     las = las_file.read()
     points = np.vstack((las.x, las.y, las.z)).T
 
@@ -16,12 +16,12 @@ with laspy.open(r"C:\Users\lukas\Desktop\pointcloud_big.las") as las_file:
     if hasattr(las, 'red') and hasattr(las, 'green') and hasattr(las, 'blue'):
         rgb = np.vstack((las.red, las.green, las.blue)).T / 65535.0  # Normalize to [0, 1]
         points = np.hstack((points, rgb))
+        print(rgb)
 
     if hasattr(las, 'classification_trees'):
         classification = las.classification_trees[:, np.newaxis]
         points = np.hstack((points, classification))
 
-print(points)
 # Calculate the total number of points
 total_points = len(points)
 print(f"total_points: {total_points}")
@@ -103,7 +103,7 @@ for voxel_key in voxel_dict:
 print(f"Total number of blocks created: {len(blocks)}")
 
 # Save data to HDF5 format for PointNet++
-with h5py.File(r"C:\Users\lukas\Desktop\pointcloud_blocks2.h5", 'w') as h5f:
+with h5py.File(r"C:\Users\lukas\Desktop\pointcloud_blocks4.h5", 'w') as h5f:
     grp = h5f.create_group('voxels')
     for voxel_key, voxel_points in voxel_dict.items():
         voxel_name = f"voxel_{voxel_key[0]}_{voxel_key[1]}_{voxel_key[2]}"
