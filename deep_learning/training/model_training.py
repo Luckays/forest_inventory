@@ -6,27 +6,19 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 # Step 1: Create a Custom Dataset
 class PointCloudDataset(Dataset):
-    def __init__(self, data_path, num_classes):
+    def __init__(self, data_path):
         super().__init__()
         # Load the data from HDF5 file
         self.data = []
         self.labels = []
-        self.num_classes = num_classes  # Store the number of classes
         with h5py.File(data_path, 'r') as h5f:
             blocks_grp = h5f['blocks']
             for block_name in blocks_grp:
                 block_grp = blocks_grp[block_name]
-                points = block_grp['points'][:, :4]  # XYZ + intensity
+                points = block_grp['points'][:, :3]  # XYZ (removed intensity)
                 labels = block_grp['points'][:, -1]  # Classification (last column)
-
-                # Ensure labels are valid
-                if np.any(labels < 0) or np.any(labels >= self.num_classes):
-                    print(f"Invalid label value in block {block_name}: {labels}")
-                    raise ValueError(
-                        f"Invalid label value detected in block {block_name}. Label values must be between 0 and {self.num_classes - 1}.")
                 self.data.append(points)
                 self.labels.append(labels)
 
@@ -34,10 +26,9 @@ class PointCloudDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        point_block = self.data[idx]  # Shape: (1024, 4) - (x, y, z, intensity)
+        point_block = self.data[idx]  # Shape: (1024, 3) - (x, y, z)
         labels = self.labels[idx]  # Shape: (1024,) - class labels for each point
         return torch.tensor(point_block, dtype=torch.float32), torch.tensor(labels, dtype=torch.long)
-
 
 # Step 2: Define the PointNet++ Model (using a basic architecture for simplicity)
 class PointNetPlusPlus(nn.Module):
@@ -45,7 +36,7 @@ class PointNetPlusPlus(nn.Module):
         super(PointNetPlusPlus, self).__init__()
         # Simplified PointNet++ layers for feature learning
         self.sa1 = nn.Sequential(
-            nn.Conv1d(4, 64, 1),  # First convolutional layer, input features are XYZ + intensity (4 channels)
+            nn.Conv1d(3, 64, 1),  # First convolutional layer, input features are XYZ (3 channels)
             nn.ReLU(),  # Activation function
             nn.Conv1d(64, 128, 1),  # Second convolutional layer
             nn.ReLU(),  # Activation function
@@ -63,18 +54,15 @@ class PointNetPlusPlus(nn.Module):
         x = x.transpose(2, 1)  # Output shape: (batch_size, num_points, num_classes)
         return x
 
-
 # Step 3: Training Loop
 if __name__ == "__main__":
     # Dataset and DataLoader
-    dataset_path = r"C:\Users\lukas\Desktop\pointcloud_blocks2.h5"
-    num_classes = int(max([label.max().item() for label in PointCloudDataset(dataset_path,
-                                                                             1).labels])) + 1  # Set num_classes based on the maximum label value in the dataset
-    dataset = PointCloudDataset(dataset_path, num_classes)
+    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks3.h5")
+    num_classes = int(max([label.max().item() for label in dataset.labels])) + 1  # Set num_classes based on the maximum label value in the dataset
 
     # Hyperparameters
     batch_size = 16
-    num_epochs = 50
+    num_epochs = 200
     learning_rate = 0.00001
 
     # Dataset and DataLoader
@@ -121,7 +109,7 @@ if __name__ == "__main__":
         epoch_accuracy = 100 * correct / total  # Accuracy for the epoch
         loss_history.append(epoch_loss)  # Store loss history
         accuracy_history.append(epoch_accuracy)  # Store accuracy history
-        print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2f}%")
+        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.2f}%")
 
     # Plot the loss function and accuracy
     plt.figure()
