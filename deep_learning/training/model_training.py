@@ -57,7 +57,7 @@ class PointNetPlusPlus(nn.Module):
 # Step 3: Training Loop
 if __name__ == "__main__":
     # Dataset and DataLoader
-    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks3.h5")
+    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks4.h5")
     num_classes = int(max([label.max().item() for label in dataset.labels])) + 1  # Set num_classes based on the maximum label value in the dataset
 
     # Hyperparameters

@@ -57,8 +57,8 @@ class PointNetPlusPlus(nn.Module):
 # Step 3: Training Loop
 if __name__ == "__main__":
     # Dataset and DataLoader
-    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks2.h5")
-    num_classes = int(max([label.max().item() for label in dataset.labels])) + 1  # Set num_classes based on the maximum label value in the dataset
+    dataset = PointCloudDataset(r"C:\Users\lukas\Desktop\pointcloud_blocks3.h5")
+    num_classembers = int(max([label.max().item() for label in dataset.labels])) + 1  # Set num_classes based on the maximum label value in the dataset
 
     # Hyperparameters
     batch_size = 16
@@ -67,6 +67,7 @@ if __name__ == "__main__":
 
     # Dataset and DataLoader
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
 
     # Model, Loss, and Optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
