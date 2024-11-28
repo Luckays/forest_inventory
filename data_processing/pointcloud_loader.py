@@ -5,22 +5,25 @@ import numpy as np
 import h5py
 import os
 import random
+import matplotlib.pyplot as plt
 
 from scipy.constants import point
+from sympy import print_tree
 
 #TODO
 """
 1. Input folder, output folder, if traning data, voxel size, voxel overlap
 2. Loading from folder
 3. Condition for training data
-4. Add RANDOM and FPS
-5. Use more effective voxelization
+4. FPS
+5. Add to voxelization overlap (maybe)
 """
 
 class PointCloudLoader:
     def __init__(self, project_folder, las_path):
         self.project_folder = project_folder
         self.las_path = las_path
+        self.output_path = os.path.join(project_folder, os.path.splitext(os.path.basename(las_path))[0] + ".h5")
         self.points = None
         self.las_values = {
             'intensity': False,
@@ -87,65 +90,94 @@ class PointCloudLoader:
 
         print(f"Metadata written to '{metadata_file_path}'.")
 
-
     def voxelize(self, voxel_size_x, voxel_size_y, voxel_overlap_ratio):
+        # Determine the bounds of the point cloud
         x_min, y_min, z_min = np.min(self.points[:, :3], axis=0)
         x_max, y_max, z_max = np.max(self.points[:, :3], axis=0)
         voxel_size_z = abs(z_min - z_max)
 
-        voxel_origin_size_x = voxel_size_x * (1 - voxel_overlap_ratio)
-        voxel_origin_size_y = voxel_size_y * (1 - voxel_overlap_ratio)
+        voxel_origin_size_x = voxel_size_x  # * (1 - voxel_overlap_ratio)
+        voxel_origin_size_y = voxel_size_y  # * (1 - voxel_overlap_ratio)
         voxel_origin_size_z = voxel_size_z
 
-        x_indices = np.arange(x_min, x_max, voxel_origin_size_x)
-        y_indices = np.arange(y_min, y_max, voxel_origin_size_y)
-        z_indices = np.arange(z_min, z_max, voxel_origin_size_z)
+        # Calculate voxel indices for each point
+        x_indices = np.floor((self.points[:, 0] - x_min) / voxel_origin_size_x).astype(int)
+        y_indices = np.floor((self.points[:, 1] - y_min) / voxel_origin_size_y).astype(int)
+        z_indices = np.floor((self.points[:, 2] - z_min) / voxel_origin_size_z).astype(int)
 
-        for x in x_indices:
-            for y in y_indices:
-                for z in z_indices:
-                    mask = (
-                        (self.points[:, 0] >= x) & (self.points[:, 0] < x + voxel_size_x) &
-                        (self.points[:, 1] >= y) & (self.points[:, 1] < y + voxel_size_y) &
-                        (self.points[:, 2] >= z) & (self.points[:, 2] < z + voxel_size_z)
-                    )
+        # Stack voxel indices together
+        voxel_keys = np.c_[x_indices, y_indices, z_indices]
 
-                    voxel_points = self.points[mask]
-                    if len(voxel_points) > 0:
-                        self.voxel_dict[(x, y, z)] = voxel_points
+        # Use np.unique to get unique voxel keys and their inverse indices
+        unique_keys, inverse_indices = np.unique(voxel_keys, axis=0, return_inverse=True)
+
+        # Sort points according to the voxels they belong to using inverse indices
+        sorted_indices = np.argsort(inverse_indices)
+        sorted_points = self.points[sorted_indices]
+        sorted_inverse_indices = inverse_indices[sorted_indices]
+
+        # Find the boundaries of the groups (each group corresponds to one voxel)
+        boundaries = np.diff(sorted_inverse_indices, prepend=-1, append=len(inverse_indices))
+        group_starts = np.where(boundaries != 0)[0]
+
+        # Create an empty list for each voxel
+        voxel_arrays = np.split(sorted_points, group_starts[1:])
+
+        # Create a voxel dictionary with keys being unique voxel indices
+        self.voxel_dict = {tuple(key): voxel_arrays[idx] for idx, key in enumerate(unique_keys)}
 
         print("Voxelization complete. Number of voxels:", len(self.voxel_dict))
 
+
     # def voxelize(self, voxel_size_x, voxel_size_y, voxel_overlap_ratio):
+    #     # Determine the bounds of the point cloud
     #     x_min, y_min, z_min = np.min(self.points[:, :3], axis=0)
     #     x_max, y_max, z_max = np.max(self.points[:, :3], axis=0)
     #     voxel_size_z = abs(z_min - z_max)
     #
-    #     voxel_origin_size_x = voxel_size_x * (1 - voxel_overlap_ratio)
-    #     voxel_origin_size_y = voxel_size_y * (1 - voxel_overlap_ratio)
+    #     voxel_origin_size_x = voxel_size_x #* (1 - voxel_overlap_ratio)
+    #     voxel_origin_size_y = voxel_size_y #* (1 - voxel_overlap_ratio)
+    #     voxel_origin_size_z = voxel_size_z
     #
-    #     # Calculate voxel grid boundaries
-    #     x_edges = np.arange(x_min, x_max + voxel_size_x, voxel_origin_size_x)
-    #     y_edges = np.arange(y_min, y_max + voxel_size_y, voxel_origin_size_y)
-    #     z_edges = np.array([z_min, z_max])  # Single voxel in the z-direction (if fixed size)
-    #
-    #     # Assign points to voxel grid
     #     x_indices = np.floor((self.points[:, 0] - x_min) / voxel_origin_size_x).astype(int)
     #     y_indices = np.floor((self.points[:, 1] - y_min) / voxel_origin_size_y).astype(int)
-    #     z_indices = np.zeros(len(self.points), dtype=int)  # All points in one layer for z
-    #     voxel_indices = np.stack((x_indices, y_indices, z_indices), axis=1)
+    #     z_indices = np.floor((self.points[:, 2] - z_min) / voxel_origin_size_z).astype(int)
     #
-    #     # Organize points by voxel
+    #     voxel_keys = list(zip(x_indices, y_indices, z_indices))
+    #
     #     self.voxel_dict = {}
-    #     for idx, point in zip(map(tuple, voxel_indices), self.points):
-    #         if idx not in self.voxel_dict:
-    #             self.voxel_dict[idx] = []
-    #         self.voxel_dict[idx].append(point)
+    #     for idx, key in enumerate(voxel_keys):
+    #         if key not in self.voxel_dict:
+    #             self.voxel_dict[key] = []
+    #             print("1")
+    #         self.voxel_dict[key].append(self.points[idx])
     #
-    #     # Convert lists to arrays for better performance
-    #     self.voxel_dict = {k: np.array(v) for k, v in self.voxel_dict.items()}
+    #     for key in self.voxel_dict:
+    #         self.voxel_dict[key] = np.array(self.voxel_dict[key])
+    #         print("2")
+    #
     #     print("Voxelization complete. Number of voxels:", len(self.voxel_dict))
 
+    def plot_voxel_grid(self):
+        # Create a 2D grid representing the number of points in each voxel
+        voxel_count = {}
+        for (x_idx, y_idx, _), points in self.voxel_dict.items():
+            if (x_idx, y_idx) not in voxel_count:
+                voxel_count[(x_idx, y_idx)] = 0
+            voxel_count[(x_idx, y_idx)] += len(points)
+
+        x_indices = [key[0] for key in voxel_count.keys()]
+        y_indices = [key[1] for key in voxel_count.keys()]
+        counts = [voxel_count[key] for key in voxel_count.keys()]
+
+        plt.figure(figsize=(10, 8))
+        plt.scatter(x_indices, y_indices, c=counts, cmap='viridis', s=100, edgecolor='black')
+        plt.colorbar(label='Number of Points per Voxel')
+        plt.xlabel('Voxel X Index')
+        plt.ylabel('Voxel Y Index')
+        plt.title('2D Grid of Voxel Point Counts')
+        plt.grid(True)
+        plt.show()
 
     def divide_to_blocks(self, block_size=1024, method = "RANDOM"):
         for voxel_key, voxel_points in self.voxel_dict.items():
@@ -179,118 +211,72 @@ class PointCloudLoader:
         return indices
 
     def fps_sampling(self, remaining_points, block_size):
-        print("pdal")
+        # Convert the points to LAS format for PDAL input
+        point_data = remaining_points.astype(np.float32)
+        #
+        # # Use an in-memory point cloud for PDAL
+        # json_pipeline = f"""
+        # {{
+        #   "pipeline": [
+        #     {{
+        #       "type": "filters.fps",
+        #       "count": {block_size}
+        #     }}
+        #   ]
+        # }}
+        # """
+        #
+        # pipeline = pdal.Pipeline(json_pipeline, arrays=[point_data])
+        # pipeline.execute()
+        #
+        # sampled_array = pipeline.arrays[0]  # Resulting downsampled points
+        # selected_indices = np.isin(remaining_points, sampled_array).all(axis=1).nonzero()[0]
+        #
+        # return selected_indices
+
+    def save_to_hdf5(self):
+        with h5py.File(self.output_path, 'w') as h5f:
+            grp = h5f.create_group('voxels')
+            for voxel_key, voxel_points in self.voxel_dict.items():
+                voxel_name = f"voxel_{voxel_key[0]}_{voxel_key[1]}_{voxel_key[2]}"
+                voxel_grp = grp.create_group(voxel_name)
+                voxel_grp.create_dataset('points', data=voxel_points)
+                voxel_grp.attrs['voxel_key'] = voxel_key
+
+            blocks_grp = h5f.create_group('blocks')
+            for i, block in enumerate(self.blocks):
+                block_name = f"block_{i}"
+                block_grp = blocks_grp.create_group(block_name)
+                block_grp.create_dataset('points', data=block)
+                block_grp.attrs['voxel_key'] = self.block_metadata[i]['voxel_key']
+                block_grp.attrs['block_index'] = self.block_metadata[i]['block_index']
+
+            # Save additional LAS values
+            for key, value in self.las_values.items():
+                h5f.attrs[key] = value
+
+            # Save number of points and classes
+            h5f.attrs['num_points'] = self.num_points
+            if self.las_values['classification']:
+                h5f.create_dataset('classes', data=self.classes)
+
+        print("Data has been saved to HDF5 format at", self.output_path)
+
+
 # Example usage
 if __name__ == "__main__":
     project_folder = (r"C:\Users\lukas\Desktop")
-    las_path = (r"C:\Users\lukas\Desktop\pointcloud_big.las")
+    las_path = (r"C:\Users\lukas\Desktop\pointcloud_velky.las")
     pcl_loader = PointCloudLoader(project_folder, las_path)
     pcl_loader.load_las_file()
     pcl_loader.metadata_extraction()
     pcl_loader.voxelize(2,2,0.1)
     pcl_loader.divide_to_blocks()
     pcl_loader.divide_to_blocks()
+    pcl_loader.save_to_hdf5()
 
 
-# # Load the LAS file efficiently
-# with laspy.open(r"C:\Users\lukas\Desktop\pointcloud_velky.las") as las_file:
-#     las = las_file.read()
-#     points = np.vstack((las.x, las.y, las.z)).T
-#
-#     # Adding additional attributes if they exist
-#     if hasattr(las, 'intensity'):
-#         intensity = las.intensity[:, np.newaxis]
-#         points = np.hstack((points, intensity))
-#
-#     if hasattr(las, 'red') and hasattr(las, 'green') and hasattr(las, 'blue'):
-#         rgb = np.vstack((las.red, las.green, las.blue)).T / 65535.0  # Normalize to [0, 1]
-#         points = np.hstack((points, rgb))
-#         print(rgb)
-#
-#     if hasattr(las, 'classification_trees'):
-#         classification = las.classification_trees[:, np.newaxis]
-#         points = np.hstack((points, classification))
-#
-# # Calculate the total number of points
-# total_points = len(points)
-# print(f"total_points: {total_points}")
-#
-# # Voxelization with overlap
-# voxel_size_x = float(input("Enter voxel size for x-axis: "))
-# voxel_size_y = float(input("Enter voxel size for y-axis: "))
-# voxel_size_z = np.max(points[:, 2]) - np.min(points[:, 2]) + 1
-#
-# # Define voxel overlap ratio (e.g., 0.5 for 50% overlap)
-# voxel_overlap_ratio = float(input("Enter voxel overlap ratio (0 to 1): "))
-#
-# # Generate voxel bounds and indices with overlap
-# x_min, y_min, z_min = np.min(points[:, :3], axis=0)
-# x_max, y_max, z_max = np.max(points[:, :3], axis=0)
-#
-# # Calculate the adjusted voxel size to include overlap
-# adjusted_voxel_size_x = voxel_size_x * (1 - voxel_overlap_ratio)
-# adjusted_voxel_size_y = voxel_size_y * (1 - voxel_overlap_ratio)
-# adjusted_voxel_size_z = voxel_size_z * (1 - voxel_overlap_ratio)
-#
-# # Generate overlapping voxel indices
-# x_indices = []
-# y_indices = []
-# z_indices = []
-# for i in range(int(np.ceil((x_max - x_min) / adjusted_voxel_size_x))):
-#     x_indices.append(x_min + i * adjusted_voxel_size_x)
-# for i in range(int(np.ceil((y_max - y_min) / adjusted_voxel_size_y))):
-#     y_indices.append(y_min + i * adjusted_voxel_size_y)
-# for i in range(int(np.ceil((z_max - z_min) / adjusted_voxel_size_z))):
-#     z_indices.append(z_min + i * adjusted_voxel_size_z)
-#
-# voxel_indices = []
-# for x in x_indices:
-#     for y in y_indices:
-#         for z in z_indices:
-#             mask = (points[:, 0] >= x) & (points[:, 0] < x + voxel_size_x) & \
-#                    (points[:, 1] >= y) & (points[:, 1] < y + voxel_size_y) & \
-#                    (points[:, 2] >= z) & (points[:, 2] < z + voxel_size_z)
-#             voxel_points = points[mask]
-#             if len(voxel_points) > 0:
-#                 voxel_indices.append((x, y, z, len(voxel_points)))
-#
-# # Store points for each voxel
-# voxel_dict = {}
-# for x, y, z, count in voxel_indices:
-#     key = (x, y, z)
-#     mask = (points[:, 0] >= x) & (points[:, 0] < x + voxel_size_x) & \
-#            (points[:, 1] >= y) & (points[:, 1] < y + voxel_size_y) & \
-#            (points[:, 2] >= z) & (points[:, 2] < z + voxel_size_z)
-#     voxel_points = points[mask]
-#     voxel_dict[key] = voxel_points
-#
-# # Divide each voxel into blocks with 1024 points (input to PointNet++) without overlap
-# block_size = 1024
-# blocks = []
-# block_metadata = []
-#
-# for voxel_key in voxel_dict:
-#     voxel_points = voxel_dict[voxel_key]
-#
-#     print(f"Voxel {voxel_key}: Number of points in voxel: {len(voxel_points)}")
-#
-#     if len(voxel_points) < block_size:
-#         continue
-#
-#     # Create blocks without overlap
-#     start_idx = 0
-#     voxel_block_count = 0
-#     while start_idx + block_size <= len(voxel_points):
-#         block = voxel_points[start_idx:start_idx + block_size]
-#         blocks.append(block)
-#         block_metadata.append({'voxel_key': voxel_key, 'block_index': voxel_block_count})
-#         voxel_block_count += 1
-#         start_idx += block_size  # Move forward by block size to create non-overlapping blocks
-#
-#     print(f"Voxel {voxel_key}: Number of blocks created: {voxel_block_count}")
-#
-# print(f"Total number of blocks created: {len(blocks)}")
-#
+
 # # Save data to HDF5 format for PointNet++
 # with h5py.File(r"C:\Users\lukas\Desktop\pointcloud_blocks4.h5", 'w') as h5f:
 #     grp = h5f.create_group('voxels')
