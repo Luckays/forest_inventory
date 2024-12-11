@@ -15,14 +15,30 @@ class PointCloudDataset(Dataset):
         # Load the data from HDF5 file
         self.data = []
         self.labels = []
+
         with h5py.File(data_path, 'r') as h5f:
-            blocks_grp = h5f['blocks']
-            for block_name in blocks_grp:
-                block_grp = blocks_grp[block_name]
-                points = block_grp['points'][:, :4]  # XYZ + intensity
-                labels = block_grp['points'][:, -1]  # Classification (last column)
-                self.data.append(points)
-                self.labels.append(labels)
+            if 'voxels' not in h5f:
+                raise ValueError("Invalid file format: 'voxels' group not found.")
+
+            voxels_grp = h5f['voxels']
+            for voxel_name in voxels_grp:
+                voxel_grp = voxels_grp[voxel_name]
+
+                if 'blocks' not in voxel_grp:
+                    continue
+
+                blocks_grp = voxel_grp['blocks']
+                for block_name in blocks_grp:
+                    block_data = blocks_grp[block_name][()]
+
+                    if block_data.shape[1] < 5:  # Ensure at least 5 columns (XYZ, intensity, label)
+                        raise ValueError(f"Block {block_name} has insufficient columns.")
+
+                    points = block_data[:, :4]  # XYZ + intensity
+                    labels = block_data[:, 4]  # Classification (5th column)
+
+                    self.data.append(points)
+                    self.labels.append(labels)
 
     def __len__(self):
         return len(self.data)
@@ -34,13 +50,13 @@ class PointCloudDataset(Dataset):
 
 
 # Step 2: Define the Training Function
-def train_pointnet(data_path, epochs=10, batch_size=16, learning_rate=0.001):
+def train_pointnet(data_path, epochs, batch_size, learning_rate):
     # Create dataset and dataloader
     dataset = PointCloudDataset(data_path)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     # Initialize the model, loss function, and optimizer
-    num_classes = 100  # Assuming 100 classes for individual tree segmentation
+    num_classes = int(max([label.max().item() for label in dataset.labels])) + 1
     model = get_model(num_classes).cuda()
     criterion = get_loss().cuda()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -57,20 +73,18 @@ def train_pointnet(data_path, epochs=10, batch_size=16, learning_rate=0.001):
             optimizer.zero_grad()
             pred, _ = model(points)
             loss = criterion(pred, labels, None, None)  # Adjusted for segmentation loss
-
             # Backward pass
             loss.backward()
             optimizer.step()
 
+
             running_loss += loss.item()
-            if i % 10 == 9:  # Print every 10 mini-batches
-                print(f"Epoch {epoch + 1}, Batch {i + 1}, Loss: {running_loss / 10:.4f}")
-                running_loss = 0.0
+
 
     print('Training completed')
 
 
 # Example usage
 if __name__ == "__main__":
-    data_path = r"C:\Users\lukas\Desktop\pointcloud_blocks3.h5"  # Path to your HDF5 dataset
-    train_pointnet(data_path, epochs=20, batch_size=8, learning_rate=0.001)
+    data_path = r"C:\Users\lukas\Desktop\Test\H5\pointcloud_big.h5"  # Path to your HDF5 dataset
+    train_pointnet(data_path, epochs=20, batch_size=16, learning_rate=0.001)

@@ -4,14 +4,15 @@ import h5py
 import os
 import argparse
 import matplotlib.pyplot as plt
-
-
+import ctypes
+import open3d as o3d
 #TODO
 """
 1. Input folder, output folder voxel size, voxel overlap
 2. Loading from folder
 4. FPS
 """
+
 
 class PointCloudLoader:
     def __init__(self, output_folder, las_path):
@@ -29,6 +30,15 @@ class PointCloudLoader:
         self.voxel_dict = {}
         self.blocks = []
         self.block_metadata = []
+        self.fps_lib = ctypes.CDLL(os.path.join(os.path.dirname(__file__), "fpssampling.dll"))  # Load the DLL
+
+        # Define the DLL function prototype
+        self.fps_lib.farthest_point_sampling.argtypes = [
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int)
+        ]
 
     def load_las_file(self):
         with laspy.open(self.las_path) as las_file:
@@ -145,25 +155,36 @@ class PointCloudLoader:
         plt.grid(True)
         plt.show()
 
-    def divide_to_blocks(self, block_size=1024, method = "RANDOM"):
+    def divide_to_blocks(self, block_size=1024, method = "FPS"):
         total_voxels = len(self.voxel_dict)
         print(f"Total voxels to process: {total_voxels}")
 
         for idx, (voxel_key, voxel_points) in enumerate(self.voxel_dict.items()):
             if len(voxel_points) < block_size:
                 continue
-            remaining_points = voxel_points.copy()
+            remaining_points = np.array(voxel_points)
             voxel_block_count = 0
 
             while len(remaining_points) >= block_size:
                 if method == "RANDOM":
                     selected_indices = self.random_sampling(remaining_points, block_size)
                 elif method == "FPS":
-                    selected_points = self.fps_sampling(remaining_points, block_size)
+                    selected_indices = self.fps_sampling_optimized(remaining_points, block_size)
                 else:
                     raise ValueError("Unknown sampling method specified")
 
+                if selected_indices is None:
+                    print(f"Error: Unable to select points for voxel {voxel_key}")
+                    break
+
+
+
                 selected_points = remaining_points[selected_indices]
+
+                visualize = False
+                if visualize:
+                    self.view_3d_blocks(selected_points)
+
                 self.blocks.append(selected_points)
                 self.block_metadata.append({'voxel_key': voxel_key, 'block_index': voxel_block_count})
                 voxel_block_count += 1
@@ -179,33 +200,54 @@ class PointCloudLoader:
 
         print(f"Total number of blocks created: {len(self.blocks)}")
 
+    def view_3d_blocks(self, points):
+        """
+        Visualize the 3D point cloud blocks using Open3D.
+
+        Parameters:
+            blocks (list of numpy.ndarray or numpy.ndarray): A list of point clouds or a single point cloud.
+        """
+        # Extract x, y, z coordinates (assume the first 3 columns are x, y, z)
+        xyz = points[:, :3]
+
+        # Create a PointCloud object
+        point_cloud = o3d.geometry.PointCloud()
+        point_cloud.points = o3d.utility.Vector3dVector(xyz)
+
+        # If RGB values are available, use them for coloring
+        if points.shape[1] >= 6:  # Assuming columns 4, 5, 6 are RGB
+            rgb = points[:, 3:6]  # Extract RGB
+            point_cloud.colors = o3d.utility.Vector3dVector(rgb)
+
+        # Visualize the point cloud
+        o3d.visualization.draw_geometries([point_cloud])
+
     def random_sampling(self, remaining_points, block_size):
+        if len(remaining_points) < block_size:
+            return None
         indices = np.random.choice(len(remaining_points), size=block_size, replace=False)
         return indices
 
-    def fps_sampling(self, remaining_points, block_size):
-        # Convert the points to LAS format for PDAL input
-        point_data = remaining_points.astype(np.float32)
-        #
-        # # Use an in-memory point cloud for PDAL
-        # json_pipeline = f"""
-        # {{
-        #   "pipeline": [
-        #     {{
-        #       "type": "filters.fps",
-        #       "count": {block_size}
-        #     }}
-        #   ]
-        # }}
-        # """
-        #
-        # pipeline = pdal.Pipeline(json_pipeline, arrays=[point_data])
-        # pipeline.execute()
-        #
-        # sampled_array = pipeline.arrays[0]  # Resulting downsampled points
-        # selected_indices = np.isin(remaining_points, sampled_array).all(axis=1).nonzero()[0]
-        #
-        # return selected_indices
+    def fps_sampling_optimized(self, remaining_points, block_size):
+        """
+        Perform farthest point sampling using the DLL.
+        """
+        num_points = remaining_points.shape[0]
+        points_flat = remaining_points.astype(np.float32).flatten()
+
+        # Allocate output array for indices
+        output_indices = np.zeros(block_size, dtype=np.int32)
+
+        # Call the FPS function from the DLL
+        self.fps_lib.farthest_point_sampling(
+            points_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            num_points,
+            block_size,
+            output_indices.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+        )
+
+        return output_indices
+
 
     def save_to_h5(self):
 
