@@ -1,0 +1,7 @@
+data_path: "D:/Test/H5/2024-09-23_10-10-46-part.h5"
+batch_size: 16
+learning_rate: 0.001
+epochs: 20
+num_workers: 4
+model_save_path: "D:/Test/model.pth"
+test_data_path: "D:/Test/H5/2024-09-23_10-10-46-part.h5"

@@ -30,7 +30,6 @@ class PointCloudDataset(Dataset):
                 blocks_grp = voxel_grp['blocks']
                 for block_name in blocks_grp:
                     block_data = blocks_grp[block_name][()]
-
                     if block_data.shape[1] < 5:  # Ensure at least 5 columns (XYZ, intensity, label)
                         raise ValueError(f"Block {block_name} has insufficient columns.")
 

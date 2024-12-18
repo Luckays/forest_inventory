@@ -6,12 +6,8 @@ import argparse
 import matplotlib.pyplot as plt
 import ctypes
 import open3d as o3d
-#TODO
-"""
-1. Input folder, output folder voxel size, voxel overlap
-2. Loading from folder
-4. FPS
-"""
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 class PointCloudLoader:
@@ -30,7 +26,7 @@ class PointCloudLoader:
         self.voxel_dict = {}
         self.blocks = []
         self.block_metadata = []
-        self.fps_lib = ctypes.CDLL(os.path.join(os.path.dirname(__file__), "fpssampling.dll"))  # Load the DLL
+        self.fps_lib = ctypes.CDLL(os.path.join(os.path.dirname(__file__), "Release2/fpssampling.dll"))  # Load the DLL
 
         # Define the DLL function prototype
         self.fps_lib.farthest_point_sampling.argtypes = [
@@ -134,6 +130,61 @@ class PointCloudLoader:
 
         print("Voxelization complete. Number of voxels:", len(self.voxel_dict))
 
+    def process_voxel(self, voxel_key, voxel_points, block_size, method):
+        if len(voxel_points) < block_size:
+            return
+        remaining_points = np.array(voxel_points)
+        voxel_block_count = 0
+
+        while len(remaining_points) >= block_size:
+            if method == "RANDOM":
+                selected_indices = self.random_sampling(remaining_points, block_size)
+            elif method == "FPS":
+                selected_indices = self.fps_sampling_optimized(remaining_points, block_size)
+            else:
+                raise ValueError("Unknown sampling method specified")
+
+            if selected_indices is None:
+                print(f"Error: Unable to select points for voxel {voxel_key}")
+                break
+
+            selected_points = remaining_points[selected_indices]
+
+            visualize = False
+            if visualize:
+                self.view_3d_blocks(selected_points)
+
+            self.blocks.append(selected_points)
+            self.block_metadata.append({'voxel_key': voxel_key, 'block_index': voxel_block_count})
+            voxel_block_count += 1
+
+            mask = np.ones(len(remaining_points), dtype=bool)
+            mask[selected_indices] = False
+            remaining_points = remaining_points[mask]
+            # print(
+            #     f"Voxel {voxel_key}: Remaining points after creating block {voxel_block_count}: {len(remaining_points)}")
+        print(f"Time:{round(time.time() - start_time,3)} Voxel {voxel_key}: Number of blocks created: {voxel_block_count}")
+
+    def divide_to_blocks(self, block_size=1024, method="FPS"):
+        total_voxels = len(self.voxel_dict)
+        print(f"Total voxels to process: {total_voxels}")
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = []
+            for voxel_key, voxel_points in self.voxel_dict.items():
+                futures.append(executor.submit(self.process_voxel_effective, voxel_key, voxel_points, block_size))
+
+        # for voxel_key, voxel_points in self.voxel_dict.items():
+        #   self.process_voxel_effective(voxel_key, voxel_points, block_size)
+
+            for idx, future in enumerate(futures):
+                future.result()
+                if (idx + 1) % max(1, total_voxels // 100) == 0 or idx + 1 == total_voxels:
+                    percent = (idx + 1) / total_voxels * 100
+                    print(f"Progress: {percent:.2f}% ({idx + 1}/{total_voxels})")
+
+        print(f"Total number of blocks created: {len(self.blocks)}")
+
     def plot_voxel_grid(self):
         # Create a 2D grid representing the number of points in each voxel
         voxel_count = {}
@@ -155,50 +206,45 @@ class PointCloudLoader:
         plt.grid(True)
         plt.show()
 
-    def divide_to_blocks(self, block_size=1024, method = "FPS"):
-        total_voxels = len(self.voxel_dict)
-        print(f"Total voxels to process: {total_voxels}")
+    def process_voxel_effective(self, voxel_key, voxel_points, block_size):
+        if len(voxel_points) < block_size:
+            return
 
-        for idx, (voxel_key, voxel_points) in enumerate(self.voxel_dict.items()):
-            if len(voxel_points) < block_size:
-                continue
-            remaining_points = np.array(voxel_points)
-            voxel_block_count = 0
+        # Convert voxel points to numpy array
+        points = np.array(voxel_points)[:, :3].astype(np.float32)
 
-            while len(remaining_points) >= block_size:
-                if method == "RANDOM":
-                    selected_indices = self.random_sampling(remaining_points, block_size)
-                elif method == "FPS":
-                    selected_indices = self.fps_sampling_optimized(remaining_points, block_size)
-                else:
-                    raise ValueError("Unknown sampling method specified")
+        # Prepare output indices
+        max_blocks = len(points) // block_size
+        output_indices = np.zeros(max_blocks * block_size, dtype=np.int32)
 
-                if selected_indices is None:
-                    print(f"Error: Unable to select points for voxel {voxel_key}")
-                    break
+        # Call the C++ function to divide the voxel into blocks
+        num_blocks = self.fps_lib.divide_voxel_into_blocks(
+            points.flatten().ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            len(points),
+            block_size,
+            output_indices.ctypes.data_as(ctypes.POINTER(ctypes.c_int))
+        )
 
+        if num_blocks == 0:
+            print(f"Error: Unable to divide voxel {voxel_key} into blocks")
+            return
 
+        # Process each block returned by the C++ function
+        for block_idx in range(num_blocks):
+            block_start = block_idx * block_size
+            block_end = block_start + block_size
+            selected_indices = output_indices[block_start:block_end]
 
-                selected_points = remaining_points[selected_indices]
+            selected_points = voxel_points[selected_indices]
 
-                visualize = False
-                if visualize:
-                    self.view_3d_blocks(selected_points)
+            visualize = False
+            if visualize:
+                self.view_3d_blocks(selected_points)
 
-                self.blocks.append(selected_points)
-                self.block_metadata.append({'voxel_key': voxel_key, 'block_index': voxel_block_count})
-                voxel_block_count += 1
+            self.blocks.append(selected_points)
+            self.block_metadata.append({'voxel_key': voxel_key, 'block_index': block_idx})
 
-                mask = np.ones(len(remaining_points), dtype=bool)
-                mask[selected_indices] = False
-                remaining_points = remaining_points[mask]
-            print(f"Voxel {voxel_key}: Number of blocks created: {voxel_block_count}")
-
-            if (idx + 1) % max(1, total_voxels // 100) == 0 or idx + 1 == total_voxels:
-                percent = (idx + 1) / total_voxels * 100
-                print(f"Progress: {percent:.2f}% ({idx + 1}/{total_voxels})")
-
-        print(f"Total number of blocks created: {len(self.blocks)}")
+        print(f"Time:{round(time.time() - start_time, 3)} Voxel {voxel_key}: Number of blocks created: {num_blocks}")
 
     def view_3d_blocks(self, points):
         """
@@ -232,8 +278,12 @@ class PointCloudLoader:
         """
         Perform farthest point sampling using the DLL.
         """
-        num_points = remaining_points.shape[0]
-        points_flat = remaining_points.astype(np.float32).flatten()
+        # Extract only XYZ coordinates
+        xyz_points = remaining_points[:, :3]  # Assuming the first three columns are X, Y, Z
+        num_points = xyz_points.shape[0]
+
+        # Flatten the XYZ array for C++ compatibility
+        points_flat = xyz_points.astype(np.float32).flatten()
 
         # Allocate output array for indices
         output_indices = np.zeros(block_size, dtype=np.int32)
@@ -247,7 +297,6 @@ class PointCloudLoader:
         )
 
         return output_indices
-
 
     def save_to_h5(self):
 
@@ -318,4 +367,11 @@ def start():
 
 # Example usage
 if __name__ == "__main__":
+   start_time = time.time()
    start()
+   # End the timer
+   end_time = time.time() #14.5024 seconds,
+
+   # Calculate the elapsed time
+   elapsed_time = end_time - start_time
+   print(f"Execution Time: {elapsed_time:.4f} seconds")
