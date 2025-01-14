@@ -30,7 +30,7 @@ class PointCloudDataset(Dataset):
         # Load the data from HDF5 file
         self.data = []
         self.labels = []
-
+        block = []
         with h5py.File(data_path, 'r') as h5f:
             if 'voxels' not in h5f:
                 raise ValueError("Invalid file format: 'voxels' group not found.")
@@ -38,12 +38,13 @@ class PointCloudDataset(Dataset):
             voxels_grp = h5f['voxels']
             for voxel_name in voxels_grp:
                 voxel_grp = voxels_grp[voxel_name]
-
+                print(voxel_name)
                 if 'blocks' not in voxel_grp:
                     continue
 
                 blocks_grp = voxel_grp['blocks']
                 for block_name in blocks_grp:
+                    print(block_name)
                     block_data = blocks_grp[block_name][()]
                     if block_data.shape[1] < 5:  # Ensure at least 5 columns (XYZ, intensity, label)
                         raise ValueError(f"Block {block_name} has insufficient columns.")
@@ -53,7 +54,6 @@ class PointCloudDataset(Dataset):
 
                     self.data.append(points)
                     self.labels.append(labels)
-
     def __len__(self):
         return len(self.data)
 
@@ -120,7 +120,7 @@ class Trainer:
 
     def train(self):
         dataset = PointCloudDataset(self.config.get('data_path'))
-        dataloader = DataLoader(dataset, batch_size=self.config.get('batch_size'), shuffle=True, num_workers=4)
+        dataloader = DataLoader(dataset, batch_size=self.config.get('batch_size'), shuffle=True, num_workers=0)
 
 
         num_classes = int(max(label.max().item() for label in dataset.labels) + 1)
@@ -134,13 +134,21 @@ class Trainer:
         class_weights = class_weights / class_weights.sum()
         class_weights = torch.tensor(class_weights, dtype=torch.float32).to(self.device)
 
+        print("classes done")
 
         for epoch in range(self.config.get('epochs')):
+            print("epoch: " + str(epoch))
             model.train()
+            print("model")
             running_loss = 0.0
-            for points, labels in dataloader:
-                points, labels = points.permute(0, 2, 1).to(self.device), labels.to(self.device)
 
+            print(dataloader)
+
+
+            for i, (points, labels) in enumerate(dataloader):
+                print("Point: " + str(points.shape))
+                points, labels = points.permute(0, 2, 1).to(self.device), labels.to(self.device)
+                print("Permute: " + str(points.shape))
                 optimizer.zero_grad()
                 pred = model(points)
                 loss = F.nll_loss(pred.permute(0, 2, 1), labels, weight=class_weights)
@@ -150,7 +158,6 @@ class Trainer:
             print(f"Epoch {epoch + 1}/{self.config.get('epochs')}, Loss: {running_loss / len(dataloader)}")
 
         torch.save(model.state_dict(), self.config.get('model_save_path'))
-
 
     def test(self):
         dataset = PointCloudDataset(self.config.get('test_data_path'))
@@ -170,12 +177,17 @@ class Trainer:
                 all_preds.extend(preds)
                 all_labels.extend(labels.cpu().numpy())
 
+        report = classification_report(np.concatenate(all_labels), np.concatenate(all_preds))
         print("Classification Report:")
-        print(classification_report(np.concatenate(all_labels), np.concatenate(all_preds)))
+        print(report)
 
+        # Save report to a text file
+        with open("classification_report.txt", "w") as f:
+            f.write("Classification Report:\n")
+            f.write(report)
 
 if __name__ == "__main__":
     config = Config(CONFIG_PATH)
     trainer = Trainer(config)
-    trainer.train()
+    # trainer.train()
     trainer.test()

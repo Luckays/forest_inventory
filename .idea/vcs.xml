@@ -2,5 +2,9 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Pointnet_Pointnet2_pytorch" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/pdalextension" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/pointnet2" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/pytorch3d" vcs="Git" />
   </component>
 </project>
